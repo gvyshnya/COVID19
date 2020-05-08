@@ -27,6 +27,7 @@ from google.colab import auth
 
 import seaborn as sns
 import plotly.express as px
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 
 from sklearn import preprocessing
@@ -77,14 +78,18 @@ covid_end_date = covid_df["covid_date"].dt.date.max()
 print("Start Date:", covid_start_date)
 print("End Date:", covid_end_date)
 
-"""## Loading Additional Datasets"""
+"""## Loading Additional Datasets
+
+Now we are going to load the log of COVID-19 national containment measures
+"""
 
 # This will mount the drive to this notebook
 drive.mount('/content/drive')
 
 base_dataset_folder = '/content/drive/My Drive/CoronaDatasets'
 
-covid_containment_path = base_dataset_folder + '/covid_containment/COVID 19 Containment measures data.csv'
+# Load the log of COVID-19 Containment measures
+covid_containment_path = base_dataset_folder + '/covid19-national-responses-dataset/COVID 19 Containment measures data.csv'
 
 covid_containment_master_df = pd.read_csv(covid_containment_path)
 
@@ -365,9 +370,6 @@ pipeline = pdp.PdPipeline([
 
 ])
 
-#countries_without_china = covid_df['country_id'].unique().tolist()
-#display(countries_without_china)
-
 covid_sd_df = pipeline.apply(covid_df)
 
 covid_containment_sd_df = pipeline.apply(covid_containment_df)
@@ -465,12 +467,13 @@ fig = px.bar(temp.sort_values(by="mortalityRate", ascending=False)[:10][::-1],
             )
 fig.show()
 
-"""* San Marino and Italy within the most brutal of them all (however, both countries are trending down by this metric, which is a good news)
-* Indonesia seems to be very dangerous places to get affected in Asia.
-* The drop of mortality rates in Phillipes from previous days is encouraging.
-* Death tolls in Italy have stormed up very high in the past few days. It is really worrying to see Italy suffering so much.
-* Netherlands, and Spain being the most notable ones too.
-* France recently moved off the top 10 list (by mortality rate)
+"""* Algeria is at the top of the list, trending up.
+* Italy is still one most brutal of them all (however, Italy trending down by this metric, which is a good news).
+* Belgium is trending up, sign of worry for them.
+* Netherlands, UK, Belgium, France, and Spain being the most notable ones too.
+* Indonesia appeared in the top 10 list again as of Apr 13, 2010 (replacing Bangladesh).
+* Bangladesh got off the top 10 list (a good sign for them)
+* Sweden entered the top ten list
 
 **Note**: some other countries with poor medical system and unsufficient COVID-19 test system coverage may not display truly genuine charts in this view
 
@@ -494,11 +497,11 @@ fig = px.bar(temp.sort_values(by="recoveryRate", ascending=False)[:10][::-1],
             )
 fig.show()
 
-"""* China can recover an estimated 91-92 out of every 100 that get affected. That's great and the numbers seem to increase for them everyday.
+"""* China can recover an estimated 93-94 out of every 100 that get affected. That's great and the numbers seem to increase for them every day.
 * One of the cruise ships (Diamand Princess) is also on the radar
-* Bahrain as we can see are doing really well in terms of recovering.
-* AE (within Operational Markets) seems to be in the relatively good shape, in terms of recovery
-* Italy, Spain, US, France, UK and Germany... Where are they? Is that why they are in trouble now?
+* Bahrain, South Korea, and Bruney as we can see are doing really well in terms of recovering.
+* Switzerland entered the top 10 list in terms of recoveries (good sign for them)
+* Italy, Spain, US, Netherlands, France, UK and Germany... Where are they? Is that why they are in trouble now?
 
 ### Countries with the Worst Recovery Rates
 """
@@ -615,7 +618,10 @@ fig = px.scatter_geo(formated_gdf, locations="country_id", locationmode='country
                      title='COVID-19: Recovered Cases Over Time in EUROPE', color_continuous_scale="greens", height=800)
 fig.show()
 
-"""# Feature Enrichment"""
+"""# Feature Enrichment
+
+## Basic clean-up, dates, lag, and trend features
+"""
 
 # Basic clean-up and dates features
 
@@ -639,14 +645,19 @@ def calculate_trend(df, lag_list, column):
         trend_column_lag = "Trend_" + column + "_" + str(lag)
         df[trend_column_lag] = (df[column]-df[column].shift(lag, fill_value=-999))/df[column].shift(lag, fill_value=0)
     return df
-
-
+  
 def calculate_lag(df, lag_list, column):
     for lag in lag_list:
         column_lag = "Lag_" + column + "_" + str(lag)
         df[column_lag] = df[column].shift(lag, fill_value=0)
     return df
 
+# spread ratio calculation
+def calculate_spread_ratio(df, lag_list, column):
+    for lag in lag_list:
+        trend_column_lag = "Spread_" + column + "_" + str(lag)
+        df[trend_column_lag] = df[column]/df[column].shift(lag, fill_value=0)
+    return df
 
 ts = time.time()
 covid_df_corr = calculate_lag(covid_df_corr, range(1,7), 'confirmed')
@@ -655,15 +666,256 @@ covid_df_corr = calculate_lag(covid_df_corr, range(1,7), 'recovered')
 covid_df_corr = calculate_trend(covid_df_corr, range(1,7), 'confirmed')
 covid_df_corr = calculate_trend(covid_df_corr, range(1,7), 'deaths')
 covid_df_corr = calculate_trend(covid_df_corr, range(1,7), 'recovered')
+covid_df_corr = calculate_spread_ratio(covid_df_corr, range(1,7), 'confirmed')
+covid_df_corr = calculate_spread_ratio(covid_df_corr, range(1,7), 'deaths')
+covid_df_corr = calculate_spread_ratio(covid_df_corr, range(1,7), 'recovered')
 covid_df_corr.replace([np.inf, -np.inf], 0, inplace=True)
 covid_df_corr.fillna(0, inplace=True)
 print("Time spent: ", time.time()-ts)
 
+"""## Adding Recovery and Deaths Rates"""
+
+covid_df_corr['recovery_rate'] = round((covid_df_corr['recovered']/covid_df_corr['confirmed'])*100, 2)
+covid_df_corr['mortality_rate'] = round((covid_df_corr['deaths']/covid_df_corr['confirmed'])*100, 2)
+
+"""## Adding Exponential Moving Average"""
+
+# Ref.: https://www.datacamp.com/community/tutorials/moving-averages-in-pandas
+covid_df_corr['confirmed_ema'] = covid_df_corr['confirmed'].ewm(span=40,adjust=False).mean()
+covid_df_corr['deaths_ema'] = covid_df_corr['deaths'].ewm(span=40,adjust=False).mean()
+covid_df_corr['recovered_ema'] = covid_df_corr['recovered'].ewm(span=40,adjust=False).mean()
+
+display(covid_df_corr.columns.values.tolist())
+
+display(covid_df_corr.head(10))
+
+# now saving the enriched covid-19 metrics dataframe as a local file
+local_file_path = base_dataset_folder + "/covid_enriched_" + covid_end_date.strftime("%b_%d_%Y") + ".csv"
+
+covid_df_corr.to_csv(local_file_path, index=False)
+
+print("Output completed: ", local_file_path)
+
+"""## Basic Trend, Spread, Lag, and EMA visualizations
+
+### Trends of Pandemy in Germany
+"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ValKeep(['Germany'], columns=['country_id']),
+])
+
+temp = pipeline.apply(covid_df_corr)
+
+"""Confirmed case lags as well as EMA are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed_ema'],
+                    mode='lines+markers',
+                    name='confirmed_ema'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_1'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_2'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_3'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_4'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_5'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_6'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed'],
+                    mode='lines+markers', 
+                    name='confirmed'))
+# Edit the layout
+fig.update_layout(title='Lags and EMA in Germany: Confirmed cases',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""As we can see, the charts for every Lag feature (*Lag_confirmed_1 - Lag_confirmed_6* are almost identical, and therefore we will be using *Lag_confirmed_1* only, in the visualizations for other countries below)
+
+Trends and Spread Rates (vs. 6 days ago) are illustrated below
+"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Trend_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Trend_confirmed_6'))
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Spread_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Spread_confirmed_6'))
+
+# Edit the layout
+fig.update_layout(title='Trends in Germany: Confirmed cases, Trend and Spread vs. 6 days ago',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""### Trends of Pandemy in South Korea"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ValKeep(['Korea, South'], columns=['country_id']),
+])
+
+temp = pipeline.apply(covid_df_corr)
+
+"""Confirmed case lags as well as EMA are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed_ema'],
+                    mode='lines+markers',
+                    name='confirmed_ema'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_1'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed'],
+                    mode='lines+markers', 
+                    name='confirmed'))
+# Edit the layout
+fig.update_layout(title='Lags and EMA in South Korea: Confirmed cases',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""Trends and Spread Rates (vs. 6 days ago) are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Trend_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Trend_confirmed_6'))
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Spread_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Spread_confirmed_6'))
+
+# Edit the layout
+fig.update_layout(title='Trends in South Korea: Confirmed cases, Trend and Spread vs. 6 days ago',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""### Trends of Pandemy in Singapore"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ValKeep(['Singapore'], columns=['country_id']),
+])
+
+temp = pipeline.apply(covid_df_corr)
+
+"""Confirmed case lags as well as EMA are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed_ema'],
+                    mode='lines+markers',
+                    name='confirmed_ema'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_1'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed'],
+                    mode='lines+markers', 
+                    name='confirmed'))
+# Edit the layout
+fig.update_layout(title='Lags and EMA in Singapore: Confirmed cases',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""Trends and Spread Rates (vs. 6 days ago) are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Trend_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Trend_confirmed_6'))
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Spread_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Spread_confirmed_6'))
+
+# Edit the layout
+fig.update_layout(title='Trends in Singapore: Confirmed cases, Trend and Spread vs. 6 days ago',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""### Trends of Pandemy in Ukraine"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ValKeep(['Ukraine'], columns=['country_id']),
+])
+
+temp = pipeline.apply(covid_df_corr)
+
+"""Confirmed case lags as well as EMA are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed_ema'],
+                    mode='lines+markers',
+                    name='confirmed_ema'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Lag_confirmed_1'],
+                    mode='lines+markers',
+                    name='Lag_confirmed_1'))
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['confirmed'],
+                    mode='lines+markers', 
+                    name='confirmed'))
+# Edit the layout
+fig.update_layout(title='Lags and EMA in Ukraine: Confirmed cases',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+"""Trends and Spread Rates (vs. 6 days ago) are illustrated below"""
+
+# History of CoronaVirus spread: Create traces
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Trend_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Trend_confirmed_6'))
+
+fig.add_trace(go.Scatter(x=temp['covid_date'], y=temp['Spread_confirmed_6'],
+                    mode='lines+markers', 
+                    name='Spread_confirmed_6'))
+
+# Edit the layout
+fig.update_layout(title='Trends in Ukraine: Confirmed cases, Trend and Spread vs. 6 days ago',
+                   xaxis_title='Date',
+                   yaxis_title='Number of cases')
+fig.show()
+
+display(covid_df_corr.columns)
+
 """## Correlation of the basic pandemic features"""
 
-# Booking rate correlation to COVID-19 indicators: AE perspective (other countries have too little data since COVID-19 hickup to consider for the corr analysis)
+# Correlation of COVID-19 pandemic indicators
 corr_transform = pdp.PdPipeline([
-    pdp.ColDrop ({'state',	'country_id',	'lat',	'long',	'covid_date', 'year'})
+    pdp.ColDrop ({'state',	'country_id',	'lat',	'long',	'covid_date', 'year',
+                  'day', 'month',
+      'Spread_confirmed_1', 'Spread_confirmed_2', 'Spread_confirmed_3',
+      'Spread_confirmed_4', 'Spread_confirmed_5',  'Spread_confirmed_6', 
+      'Spread_recovered_1', 'Spread_recovered_2', 'Spread_recovered_3',
+      'Spread_recovered_4', 'Spread_recovered_5',  'Spread_recovered_6', 
+      'Spread_deaths_1', 'Spread_deaths_2', 'Spread_deaths_3',
+      'Spread_deaths_4', 'Spread_deaths_5',  'Spread_deaths_6' 
+    })
 ])
 
 
@@ -686,10 +938,321 @@ ax
 
 display(corr)
 
-"""# COVID-19 and National Economies / Healthcare / Demographics / Cultural Attitudes
+"""## More Detailed Outlook on Correlations with Confirmed"""
+
+def heatmap_numeric_w_dependent_variable(df, dependent_variable):
+    '''
+    Takes df, a dependant variable as str
+    Returns a heatmap of all independent variables' correlations with dependent variable 
+    '''
+    plt.figure(figsize=(8, 10))
+    g = sns.heatmap(df.corr()[[dependent_variable]].sort_values(by=dependent_variable), 
+                    annot=True, 
+                    cmap='coolwarm', 
+                    vmin=-1,
+                    vmax=1) 
+    return g
+
+# check correlations with Confirmed
+corr_transform = pdp.PdPipeline([
+    pdp.ColDrop ({'state',	'lat',	'long', 'year',
+                  'day', 'month',
+      'Spread_confirmed_1', 'Spread_confirmed_2', 'Spread_confirmed_3',
+      'Spread_confirmed_4', 'Spread_confirmed_5',  'Spread_confirmed_6', 
+      'Spread_recovered_1', 'Spread_recovered_2', 'Spread_recovered_3',
+      'Spread_recovered_4', 'Spread_recovered_5',  'Spread_recovered_6', 
+      'Spread_deaths_1', 'Spread_deaths_2', 'Spread_deaths_3',
+      'Spread_deaths_4', 'Spread_deaths_5',  'Spread_deaths_6' 
+    })
+])
+covid_df_corr = corr_transform.apply(covid_df_corr)
+heatmap_numeric_w_dependent_variable(covid_df_corr, 'confirmed')
+
+"""We find that the following feature variables show strong and medium correlations with _confirmed_ cases
+
+- deaths
+- Lag_confirmed_1
+- Lag_confirmed_2
+- Lag_confirmed_3
+- Lag_confirmed_4
+- Lag_deaths_1
+- Lag_confirmed_5
+- Lag_deaths_2
+- Lag_confirmed_6
+- recovered
+- confirmed_ema
+- Lag_deaths_3
+- Lag_deaths_4
+- Lag_deaths_5
+- deaths_ema
+- Lag_recovered_1 (*)
+- Lag_deaths_6 (*)
+
+## More Detailed Outlook on Correlations with Deaths
+"""
+
+# check correlations with Deaths
+heatmap_numeric_w_dependent_variable(covid_df_corr, 'deaths')
+
+"""We find that the following feature variables show strong and medium correlations with _fatal cases (deaths)_
+
+- confirmed
+- Lag_deaths_1
+- Lag_confirmed_1
+- Lag_confirmed_2
+- Lag_deaths_4
+- deaths_ema
+- Lag_confirmed_4
+- Lag_confirmed_5 (*)
+- Lag_confirmed_6 (*)
+
+## More Detailed Outlook on Correlations with Recovered
+"""
+
+# check correlations with Recovered
+heatmap_numeric_w_dependent_variable(covid_df_corr, 'recovered')
+
+"""We find that the following feature variables display the strong and mediumm correlation with the number of _recovered_ cases
+
+- Trend_deaths_3
+- confirmed
+- deaths
+
+## More Detailed Outlook on Correlations with confirmed_ema
+"""
+
+# check correlations with confirmed_ema
+heatmap_numeric_w_dependent_variable(covid_df_corr, 'confirmed_ema')
+
+"""We find the following feature variables display the strong and mediumm correlation with the number of _confirmed_ema_
+
+- Lag_confirmed_6
+- Lag_confirmed_4
+- recovered_ema
+- Lag_confirmed_1
+- Lag_deaths_5
+- Lag_deaths_3
+- Lag_deaths_2
+- deaths (*)
+
+# COVID-19 Containment Measure Features
+
+Now we are going to load the features related to the timeline with the national containment measures, as maintained by the Oxford reasearch team per https://www.kaggle.com/davidoj/covid19-national-responses-dataset, with features defined in https://www.notion.so/Tag-hierarchy-Features-db9799312efa4f88851e8d49393bbb16
+"""
+
+# Load the log of COVID-19 Containment measure features
+covid_containment_features_path = base_dataset_folder + '/covid19-national-responses-dataset/countermeasures_db_johnshopkins_2020_03_30.csv'
+
+covid_containment_feature_raw = pd.read_csv(covid_containment_features_path)
+
+# pre-processing
+
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['Unnamed: 0', 'Confirmed Cases', 'Deaths']),
+    pdp.ColRename({
+        'Date': 'covid_date',
+        'Country': 'country_id'
+        }),
+    pdp.ApplyByCols(['covid_date'], pd.to_datetime),
+])
+
+covid_containment_feature_df = pipeline.apply(covid_containment_feature_raw)
+
+covid_containment_feature_df = covid_containment_feature_df.fillna(0)
+
+display(covid_containment_feature_df)
+
+"""Below is the list on containment features provided"""
+
+cols = covid_containment_feature_df.columns.values.tolist()
+
+display(cols)
+
+"""*Note:* You can refer to https://www.notion.so/Tag-hierarchy-Features-db9799312efa4f88851e8d49393bbb16 for the definition of each feature above."""
+
+# read subset of features for Germany only
+fcg_countries = {
+    'Germany': 'DE'
+}
+
+pipeline = pdp.PdPipeline([
+    pdp.ValKeep(fcg_countries.keys(), columns=['country_id']),
+    pdp.MapColVals(['country_id'], fcg_countries)
+
+])
+
+covid_containment_de_df = pipeline.apply(covid_containment_feature_df)
+
+display(covid_containment_de_df)
+
+display(covid_df_corr.columns.values)
+
+"""Now we are merging the containment measure features with the COVID-19 pandemic features as well as costructing a dataframe with relevant features for correlation analysis"""
+
+#join
+covid_data_with_containment = covid_df_corr.merge(covid_containment_feature_df, on=['country_id', 'covid_date'], how='left')
+
+# do the subset for correlation analysis
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop([
+      'country_id', 'covid_date', 
+      'Lag_confirmed_2', 'Lag_confirmed_3',
+      'Lag_confirmed_4', 'Lag_confirmed_5', 'Lag_confirmed_1',
+      'Trend_confirmed_2', 'Trend_confirmed_3',
+      'Trend_confirmed_4', 'Trend_confirmed_5', 'Trend_confirmed_1',
+      'Lag_deaths_2', 'Lag_deaths_3',
+      'Lag_deaths_4', 'Lag_deaths_5', 'Lag_deaths_1',
+      'Trend_deaths_2', 'Trend_deaths_3',
+      'Trend_deaths_4', 'Trend_deaths_5', 'Trend_deaths_1',
+      'Lag_recovered_2', 'Lag_recovered_3',
+      'Lag_recovered_4', 'Lag_recovered_5', 'Lag_recovered_1',
+      'Trend_recovered_2', 'Trend_recovered_3',
+      'Trend_recovered_4', 'Trend_recovered_5', 'Trend_recovered_1',
+      'day_num'])
+])
+
+covid_data_with_containment_corr = pipeline.apply(covid_data_with_containment)
+
+"""## Summary of Findings
+
+We find the following containment measure-related features to show strong correlation with *recovered_ema*
+
+- Testing criteria
+- Testing (number of tested people due date)
+- Diagnostics criteria tightened
+- Domestic travel restriction (*)
+- Resumption (*)
+
+At the same time, we could not detect any strong correlation of any of the containment measure features with either *confirmed*, *confirmed_ema*, or *deaths_ema*.
+
+*Notes:*
+
+- sparcity of the data about containment measures as well as relatively small number of observations (dates) with the quality containment measures in place (due to majority of nations hitting the pandemy in mid Mar 2020 only) made it a little tricky to apply it for a classical correlation analysis
+- the set of containment measure feautes is quite good for simulation modelling as is though
+
+## Detailed Correlation Analysis for Containment Measures
+
+### Correlation with confirmed cases
+"""
+
+# check correlations with Confirmed
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'confirmed')
+
+"""We can see there is no any strong correlation observed between *confirmed* and any feature derived from containment activities
+
+### Correlation with Trend_confirmed_6
+"""
+
+# check correlations with Trend_confirmed_1
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Trend_confirmed_6')
+
+"""We can see there is no any strong correlation observed between *Trend_confirmed_6* and any feature derived from containment activities
+
+### Correlation with Lag_confirmed_6
+"""
+
+# check correlations with Lag_confirmed_1
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Lag_confirmed_6')
+
+"""We can see there is no any strong correlation observed between *Lag_confirmed_6* and any feature derived from containment activities
+
+### Correlation with Exponensial Moving Average for Confirmed Cases
+"""
+
+# check correlations with confirmed_ema
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'confirmed_ema')
+
+"""We find that there is no strong correlatio displayed between the containment measure features and *confirmed_ema*
+
+### Correlation with Trend_deaths_6
+"""
+
+# check correlations with Trend_deaths_1
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Trend_deaths_6')
+
+"""We find no good correlations between containment measure features and *Trend_deaths_6*
+
+### Correlation with Lag_deaths_6
+"""
+
+# check correlations with Lag_deaths_6
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Lag_deaths_6')
+
+"""We find no good correlations between containment measure features and *Lag_deaths_6*
+
+### Correlation With Exponensial Moving Average for Fatal Cases
+"""
+
+# check correlations with deaths_ema
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'deaths_ema')
+
+"""We find that there is no strong correlation displayed between the containment measure features and *deaths_ema*
+
+### Correlations with Trend_recovered_6
+"""
+
+# check correlations with Trend_recovered_1
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Trend_recovered_6')
+
+"""We find that there is no strong correlation displayed between the containment measure features and *Trend_recovered_6*
+
+### Correlation with Lag_recovered_6
+"""
+
+# check correlations with Lag_recovered_6
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'Lag_recovered_6')
+
+"""We find that there is no strong correlation displayed between the containment measure features and *Lag_recovered_6*
+
+### Correlation With Exponensial Moving Average for Recovered Cases
+"""
+
+# check correlations with recovered_ema
+heatmap_numeric_w_dependent_variable(covid_data_with_containment_corr, 'recovered_ema')
+
+"""We find the following containment meature-related features to show strong correlation with *recovered_ema*
+
+- Testing criteria
+- Testing (number of tested people due date)
+- Diagnostics criteria tightened
+- Domestic travel restriction (*)
+- Resumption (*)
+
+# COVID-19 and National Economies / Healthcare / Demographics / Cultural Attitudes
 
 
-correlation of COVID-19 pandemic metrics (confirmed, deaths, recovered) with macroeconomic params and wealness/cultural attitude in different countries (to seee if the significant impact of culture/national economies on the coronavirus spread can be confirmed)
+Сorrelation of COVID-19 pandemic metrics (confirmed, deaths, recovered) with various parameters on  National Economies (macro-economic parameters) / Healthcare / Demographics / Cultural Attitudes will be investigated in this section. The major purpose of the research is to find candidate parameters to cluster the countries by.
+
+Then it will be possible to better predict COVID-19 spread on different country clusters in cluster-then-predict fashion.
+
+## Synopsys of Findings
+
+It has been discovered that clustering countries by parameters below could add some edge
+
+- female obesity index combined with female overweight index
+- level of death due to outdoor air pollution
+
+The atttbitutes in Economic Freedom Index, 2019 demonstrated strong correlation with *recovered_rate* and *recovered_ema*
+- *fdi_inflow (FDI Inflow (Millions))* - strong correlation with *recovered_rate* and *recovered_ema*
+- *GDP in 2019* (very strong correlation)
+- *gdp_5_growth_rate* - Average rate of GDP growth across the last 5 years, strong correlation with *recovered_rate* and *recovered_ema*
+- *gdp_tax_burden* - moderate-to-strong correlation between the gdp_tax_burden and COVID-19 spread attributes
+- *income_tax* - moderate-to-strong correlation with *recovery_rate*
+- *investom_freedom* - moderate-to-strong negative correlation with the *recovery_rate*
+- *judical_effectiveness* - moderate-to-strong correlation between *judical_effectiveness* and *recovery_rate*
+- *pub_debt* - medium correlation with *deaths_ema*
+
+The inex of happiness 2020 data did not draw strong correlations. However, we still observed some effects as follows
+
+- medium correlation between *'Perceptions of corruption'* and *recovery_rate*
+- *'Explained by: Log GDP per capita'* to have a strong-to-medium correlation with *recovery_rate* as well as medium correlation with *confirmed_ema* and *deaths_ema*
+- *'Explained by: Social support'* to have medium correlation with *recovery_rate* and *deaths_ema*
+- *'Explained by: Healthy life expectancy'* to ahve strong correlation with *recovery_rate* as well as medium correlation with *deaths_ema* and *confirmed_ema*
+- *'Explained by: Freedom to make life choices'* to have strong correlation with *recovery_rate* as well as medium negative correlation with *mortality_rate*
+- *'Explained by: Perceptions of corruption'* to have medium correlation with *recovery_rate*
+- *'Dystopia + residual'* to have medium correlation with *mortality_rate* as well as medium negative correlation with *recovery_rate*
+
+You can refer to subsections below to see more details.
 
 ## COVID-19 and Population Forecast Data 2020 from Worldometers
 
@@ -769,15 +1332,14 @@ pipeline = pdp.PdPipeline([
     pdp.ValKeep([covid_end_date], columns = ['covid_date'])              
 ])
 # countries_without_china, columns=['country_id']
-covid_latest_date_df = pipeline.apply(covid_df)
+covid_latest_date_df = pipeline.apply(covid_df_corr)
 
 #join
 all_demo_data = covid_latest_date_df.merge(world_population, on='country_id', how='left')
 
 pipe_calc = pdp.PdPipeline([
-    pdp.ApplyToRows(lambda row: (row['deaths']/row['confirmed']), 'mortality_rate'),
-    pdp.ApplyToRows(lambda row: (row['recovered']/row['confirmed']), 'recovery_rate'),
     pdp.ApplyToRows(lambda row: (row['confirmed']/row['pop_2020']), 'confirmed2pop'),
+    pdp.ApplyToRows(lambda row: (row['confirmed_ema']/row['pop_2020']), 'confirmed_ema2pop'),
     pdp.ApplyToRows(lambda row: (row['net_growth_from_2019']/row['pop_2020']), 'pop_growth'),                 
 ])
 
@@ -786,13 +1348,15 @@ all_demo_data = pipe_calc.apply(all_demo_data)
 
 display(all_demo_data)
 
+display(all_demo_data.columns.values.tolist())
+
 """Now we will prepare subset of metrics for correlation analysis"""
 
 pipeline = pdp.PdPipeline([
-    pdp.ColDrop(['state', 'country_id', 'lat', 'long', 'covid_date',
+    pdp.ColDrop(['country_id',  'covid_date',
                  'confirmed',	'deaths',	'recovered',	'pop_2020',	
-                 'net_growth_from_2019',
-                 'land_area'])
+                 'net_growth_from_2019', 'land_area',
+                 'day_num'])
 ])
 
 all_demo_data_corr = pipeline.apply(all_demo_data)
@@ -815,12 +1379,24 @@ ax
 
 display(corr)
 
+"""The correlations with _*confirmed_ema*_ will look as follows"""
+
+# check correlations with confirmed_ema2pop
+heatmap_numeric_w_dependent_variable(all_demo_data_corr, 'confirmed_ema2pop')
+
 """The key findings are as follows
 
-* There is a certain negative correlation between the ratio of national population growth in a country and the recovery rate from COVID-19
-* COVID-19 recovery rate has a certain positive correlation with the medium age of a national population 
-* COVID-19 mortality rate has a certain negative correlation with the medium age of a national population 
-* % of confirmed COVID-19 cases among the national population has a certain positive correlation with the density of population and % of urban population in a country
+* There is no strong correlation between % of confirmed COVID-19 cases among the national population (as well as the ratio of confirmed_ema to the total national population) and the number of confirmed cases
+
+The correlation with _pop_growth_ is as follows
+"""
+
+# check correlations with pop_growth
+heatmap_numeric_w_dependent_variable(all_demo_data_corr, 'pop_growth')
+
+"""The key findings are as follows
+
+* There is no strong correlation between % of confirmed COVID-19 cases among the national population (as well as the ratio of confirmed_ema to the total national population) and the population growth ratio vs. the past year
 
 ## COVID-19 and WHO Obesity Index
 
@@ -879,6 +1455,22 @@ who_obesity_df = pipeline.apply(who_obesity_raw)
 
 display(who_obesity_df)
 
+"""Now we are going to check the distributions of the obesity features"""
+
+def histograms_numeric_columns(df, numerical_columns):
+    '''
+    Takes df, numerical columns as list
+    Returns a group of histagrams
+    '''
+    f = pd.melt(df, value_vars=numerical_columns) 
+    g = sns.FacetGrid(f, col='variable',  col_wrap=4, sharex=False, sharey=False)
+    g = g.map(sns.distplot, 'value')
+    return g
+
+obesity_numerical_columns = ['combined_obesity',	'male_obesity',	'female_obesity']
+
+histograms_numeric_columns(who_obesity_df, obesity_numerical_columns)
+
 """Now we will merge *covid_latest_date_df* and the pre-processed/transformed WHO obesity dataframe"""
 
 #join
@@ -898,8 +1490,9 @@ all_obesity_data.head(5)
 """Now we will prepare subset of metrics for correlation analysis"""
 
 pipeline = pdp.PdPipeline([
-    pdp.ColDrop(['state', 'country_id', 'lat', 'long', 'covid_date',
-                 'confirmed',	'deaths',	'recovered'])
+    pdp.ColDrop(['country_id', 'covid_date',
+                 'confirmed',	'deaths',	'recovered', 
+                 'day_num'])
 ])
 
 all_obesity_data_corr = pipeline.apply(all_obesity_data)
@@ -922,10 +1515,26 @@ ax
 
 display(corr)
 
+"""Now we will take a closer look at the correlations with _combined_obesity_"""
+
+# check correlations with combined_obesity
+heatmap_numeric_w_dependent_variable(all_obesity_data_corr, 'combined_obesity')
+
+"""Now we will take a closer look at the correlations with _female_obesity_"""
+
+# check correlations with female_obesity
+heatmap_numeric_w_dependent_variable(all_obesity_data_corr, 'female_obesity')
+
+"""Now we will take a closer look at the correlations with _male_obesity_"""
+
+# check correlations with male_obesity
+heatmap_numeric_w_dependent_variable(all_obesity_data_corr, 'male_obesity')
+
 """We find that 
 
 * mortality rate  is not correlated with any of the obesity metrics
-* recovery rare has quite strong negative correlation with *female_obesity* as well as slightly less strong negative correlation with *combined_obesity*)
+* recovery rare has quite strong negative correlation with *female_obesity* as well as moderate negative correlation with *combined_obesity*) 
+* as a result, we may find it benefitial to cluster countries within the space of *female_obesity* and *combined_obesity* dimensions, and then use the resulted clusters in building the prediction models for recovered cases in the cluster-then-predict fashion
 
 ## COVID-19 and WHO Overweight Index
 
@@ -984,6 +1593,12 @@ who_overweight_df = pipeline.apply(who_overweight_raw)
 
 display(who_overweight_df)
 
+"""Now we will take a lot at  the distribution of the overweight-related numeric features"""
+
+overweight_numerical_columns = ['combined_overweight', 'male_overweight',	'female_overweight']
+
+histograms_numeric_columns(who_overweight_df, overweight_numerical_columns)
+
 """Now we will merge *covid_latest_date_df* and the pre-processed/transformed WHO overweight dataframe"""
 
 #join
@@ -1003,8 +1618,9 @@ all_overweight_data.head(5)
 """Now we will prepare subset of metrics for correlation analysis"""
 
 pipeline = pdp.PdPipeline([
-    pdp.ColDrop(['state', 'country_id', 'lat', 'long', 'covid_date',
-                 'confirmed',	'deaths',	'recovered'])
+    pdp.ColDrop(['country_id', 'covid_date',
+                 'confirmed',	'deaths',	'recovered',
+                 'day_num'])
 ])
 
 all_overweight_data_corr = pipeline.apply(all_overweight_data)
@@ -1027,12 +1643,28 @@ ax
 
 display(corr)
 
+"""Now we will take a closer look at the correlations with _combined_overweight_"""
+
+# check correlations with combined_overweight
+heatmap_numeric_w_dependent_variable(all_overweight_data_corr, 'combined_overweight')
+
+"""Now we will take a closer look at the correlations with _male_overweight_"""
+
+# check correlations with male_overweight
+heatmap_numeric_w_dependent_variable(all_overweight_data_corr, 'male_overweight')
+
+"""Now we will take a closer look at the correlations with _female_overweight_"""
+
+# check correlations with female_overweight
+heatmap_numeric_w_dependent_variable(all_overweight_data_corr, 'female_overweight')
+
 """We find that 
 
 * mortality rate  is not correlated with any of the overweight metrics
-* recovery rare has quite strong negative correlation with *female_overweight* (as well as a moderate correlation with *combined_overweight* )
+* recovery rare has relatively strong negative correlation with *female_overweight* 
+* as a result, we may want to cluster countries by *female_overweight* (or event combine it with obesity-related measures), and then use the obtained clustering in forecasting recovered cases in the cluster-then-predict fashion
 
-# COVID and Air Pollution Metrics
+## COVID and Air Pollution Metrics
 
 We will load air pollution data set first
 """
@@ -1069,6 +1701,12 @@ air_pollution_df = pipeline.apply(air_pollution_raw)
 
 display(air_pollution_df)
 
+"""Now we will be looking at the distribution of the numeric attributes related to air polution"""
+
+air_pollution_numerical_columns = ['outdoor_poll_death_rate',	'indoor_poll_death_rate']
+
+histograms_numeric_columns(air_pollution_df, air_pollution_numerical_columns)
+
 """Now we will merge *covid_latest_date_df* and the pre-processed/transformed pollution-driven death rates dataframe"""
 
 #join
@@ -1088,8 +1726,9 @@ all_air_pollution_data.head(5)
 """Now we will prepare the subset of data for correlation analysis"""
 
 pipeline = pdp.PdPipeline([
-    pdp.ColDrop(['state', 'country_id', 'lat', 'long', 'covid_date',
-                 'confirmed',	'deaths',	'recovered'])
+    pdp.ColDrop(['country_id', 'covid_date',
+                 'confirmed',	'deaths',	'recovered',
+                 'day_num'])
 ])
 
 all_air_pollution_data_corr = pipeline.apply(all_air_pollution_data)
@@ -1112,7 +1751,663 @@ ax
 
 display(corr)
 
-"""We find a weird inference (most probably) - there is quite a strong correlation between *recovery_rate* and *outdoor_poll_death_rate*. It may be related to the fact of the better industrial  development of countries with higher outbound pollution-driven deaths rate (and thus their ability to better cope with COVID-91)
+"""Now we are going to take a closer look on the correlation with _outdoor_poll_death_rate_"""
+
+# check correlations with outdoor_poll_death_rate
+heatmap_numeric_w_dependent_variable(all_air_pollution_data_corr, 'outdoor_poll_death_rate')
+
+"""Now we are going to take a closer look on the correlation with _indoor_poll_death_rate_"""
+
+# check correlations with indoor_poll_death_rate
+heatmap_numeric_w_dependent_variable(all_air_pollution_data_corr, 'indoor_poll_death_rate')
+
+"""We find a no strong or even medium correlations between COVID-19 pandemic data and *indoor_poll_death_rate* and *outdoor_poll_death_rate*.
+
+## COVID-19 and Macro-Economic Parameters of Countries (Economic Freedom Index, 2019)
+
+Reading the dataset with macro-economic parameters in memory
+"""
+
+eco_freedom_data_path = base_dataset_folder + '/the-economic-freedom-index/economic_freedom_index2019_data.csv'
+
+# Load Economic Freedom Index 2019 data file
+eco_raw = pd.read_csv(eco_freedom_data_path, encoding= "ISO-8859-1")
+
+eco_raw.head(5)
+
+"""Now we will transform the raw Economic Freedom data into the format ready to merge with COVID-19 pandemic metrics"""
+
+# Prepare country name transformation
+country_names = eco_raw['Country'].unique().tolist()
+
+# Create a zip object from two lists
+zipbObj = zip(country_names, country_names)
+ 
+# Create a dictionary from zip object
+dictOfCountries = dict(zipbObj)
+
+# overwrite a mapping for the countries with different names in WHO Obesity and COVID-19 datasets
+dictOfCountries['United States of America'] = 'US'
+dictOfCountries['Côte d\'Ivoire'] = 'Cote d\'Ivoire'
+dictOfCountries['Republic of North Macedonia'] = 'North Macedonia'
+dictOfCountries['Taiwan '] = 'Taiwan*'
+dictOfCountries['Congo, Republic of'] = 'Congo (Brazzaville)'
+dictOfCountries['Congo, Democratic Republic of the Congo'] = 'Congo (Kinshasa)'
+dictOfCountries['Slovak Republic'] = 'Slovakia'
+dictOfCountries['Kyrgyz Republic'] = 'Kyrgyzstan'
+dictOfCountries['Brunei Darussalam'] = 'Brunei'
+dictOfCountries['Macedonia'] = 'North Macedonia'
+dictOfCountries['Lao P.D.R.'] = 'Laos'
+
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['CountryID', 'Country Name', 'WEBNAME', 'Population (Millions)']),
+    pdp.ColRename({'Country': 'country_id', 
+                   'Region': 'region',
+                   'World Rank': 'world_rank', 
+                   'Region Rank': 'region_rank',
+                   '2019 Score': 'score_2019',
+                   'Property Rights': 'property_rights',	
+                   'Judical Effectiveness': 'judical_effectiveness',
+                   'Government Integrity': 'gov_integrity',
+                   'Tax Burden': 'tax_burden',
+                   'Gov\'t Spending': 'gov_spending',
+                   'Fiscal Health': 'fiscal_hlth',
+                   'Business Freedom': 'business_freedom',
+                   'Labor Freedom': 'labor_freedom',
+                   'Monetary Freedom': 'monetary_freedom',
+                   'Trade Freedom': 'trade_freedom',
+                   'Investment Freedom ': 'investment_freedom',
+                   'Financial Freedom': 'fin_freedom',
+                   'Tariff Rate (%)': 'tariff_rate',
+                   'Income Tax Rate (%)': 'income_tax',
+                   'Corporate Tax Rate (%)': 'corporate_tax',
+                   'Tax Burden % of GDP': 'gdp_tax_burden',
+                   'Gov\'t Expenditure % of GDP ': 'gdp_gov_exp_rate',
+                   'GDP (Billions, PPP)': 'gdp',
+                   'GDP Growth Rate (%)': 'gdp_growth_rate',
+                   '5 Year GDP Growth Rate (%)': 'gdp_5_growth_rate',
+                   'GDP per Capita (PPP)': 'gdp_per_capita',
+                   'Unemployment (%)': 'unemp_rate',
+                   'Inflation (%)': 'infl_rate',
+                   'FDI Inflow (Millions)': 'fdi_inflow',
+                   'Public Debt (% of GDP)': 'pub_debt'
+                   }),
+    pdp.MapColVals(['country_id'], dictOfCountries)
+])
+
+eco_df = pipeline.apply(eco_raw)
+
+# add countries that are missing in the Eco Freedom dataset yet present in
+# COVID-19 pandemic data
+
+df1 = pd.DataFrame(
+    {'country_id':[
+      'Guernsey','Andorra','Greenland','Aruba','Diamond Princess','San Marino',
+      'Jersey','Antigua and Barbuda','French Guiana',
+      'Puerto Rico','Mayotte','Holy See','Reunion','Guam','Martinique','Guadeloupe','Monaco','Czechia', 'Saint Kitts and Nevis', 'Grenada'],   
+                        
+      'region':[
+          'Europe','Europe','Americas','Americas','Asia-Pacific','Europe','Europe',
+          'Americas','Americas',
+          'Americas','Sub-Saharan Africa','Europe','Sub-Saharan Africa','Asia-Pacific',
+          'Americas','Americas','Europe','Europe', 'Americas', 'Americas']})
+    
+eco_df = eco_df.append(df1, sort=True)
+
+# cast data types on certain variables
+eco_df['gdp'] = eco_df['gdp'].str.strip('$').str.split(' ').str.get(0).str.replace(',', '').astype(float)
+eco_df['gdp_per_capita'] = eco_df['gdp_per_capita'].str.strip('$').str.split(' ').str.get(0).str.replace(',', '').astype(float)
+eco_df['unemp_rate'] = eco_df['unemp_rate'].str.split(' ').str.get(0).astype(float)
+eco_df['fdi_inflow'] = eco_df['fdi_inflow'].str.replace(',', '').astype(float)
+
+# impute NAs: fill missing values with region medians
+for col in eco_df.columns[eco_df.isna().any()].tolist():
+  eco_df[col] = eco_df[col].fillna(eco_df.groupby('region')[col].transform('median')) 
+
+display(eco_df)
+
+"""Now we will investigate relations between Economic Freedom Index variables before we merge it with COVID-19 pandemic features"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['region', 'country_id'])
+])
+
+eco_corr_df = pipeline.apply(eco_df)
+
+# sns.pairplot(eco_corr_df)
+
+corr = eco_corr_df.corr()
+
+ax = sns.heatmap(
+    corr, 
+    vmin=-1, vmax=1, center=0,
+    cmap=sns.diverging_palette(20, 220, n=200),
+    square=True
+)
+ax.set_xticklabels(
+    ax.get_xticklabels(),
+    rotation=45,
+    horizontalalignment='right'
+)
+ax.set_title('Correlation of COVID-19 Ratios with WHO Obesity Indicies')
+ax
+
+"""Now let's merge the economic freedom parameters with the latest COVID-19 epidemic metrics"""
+
+#join
+all_eco_data = covid_latest_date_df.merge(eco_df, on='country_id', how='left')
+
+pipe_calc = pdp.PdPipeline([
+    pdp.ApplyToRows(lambda row: (row['deaths']/row['confirmed']), 'mortality_rate'),
+    pdp.ApplyToRows(lambda row: (row['recovered']/row['confirmed']), 'recovery_rate'), 
+    pdp.ColDrop(['region'])               
+])
+
+# calculate ratio attributes
+all_eco_data = pipe_calc.apply(all_eco_data)
+
+all_eco_data.head(5)
+
+"""Now we will check the correlation of every attribute of Economic Freedom Index with COVID-19 pandemic parameters"""
+
+def economic_freedom_param_correlations(covid_df, eco_df, target_col):
+  col_list = eco_df.columns.values.tolist() 
+  keep_list = ['country_id', target_col]
+
+  drop_list = []
+  for col in col_list:
+    if col not in keep_list:
+      new_list = [col]
+      drop_list = drop_list + new_list
+
+  pipe_filter_param = pdp.PdPipeline([
+    pdp.ColDrop(drop_list)               
+  ])
+
+  eco_param_df = pipe_filter_param.apply(eco_df)
+
+  #join
+  eco_param_data = covid_df.merge(eco_param_df, on='country_id', how='left')
+
+  pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['country_id', 'covid_date',
+                 'confirmed',	'deaths',	'recovered',
+                 'day_num'])
+  ])
+
+  eco_param_corr = pipeline.apply(eco_param_data)
+
+  return heatmap_numeric_w_dependent_variable(eco_param_corr, target_col)
+
+"""We will check correlations with _'business_freedom'_"""
+
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'business_freedom')
+
+"""We find no strong correlations between _'business_freedom'_ and COVID-19 epidemic metrics
+
+Now we are going to look at the correlation between _corporate_tax_ and the COVID-19 pandemic metrics
+"""
+
+# check correlations with corporate_tax
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'corporate_tax')
+
+"""We find no strong correlations between _'corporate_tax'_ and COVID-19 epidemic metrics
+
+Now we are going to look at the correlation between _fdi_inflow_ and the COVID-19 pandemic metrics
+"""
+
+# check correlations with fdi_inflow
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'fdi_inflow')
+
+"""We can see quite a strong correlation of _fdi_inflow_ (FDI Inflow (Millions)) with _recovery_rate_, and therefore fdi_inflow can be used in future clustering experiments.
+
+Now we are going to look at the correlation between _fin_freedom_ and the COVID-19 pandemic metrics
+"""
+
+# check correlations with fin_freedom
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'fin_freedom')
+
+"""We can see moderate negative correlation between the *financial freedom index* and *recovery_rate*
+
+Now we are going to look at the correlation between _fiscal_hlth_ and the COVID-19 pandemic metrics
+"""
+
+# check correlations with fiscal_hlth
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'fiscal_hlth')
+
+"""We can see no correlation between the *fisccal health* and any of the COVID-19 spread attributes.
+
+Now we are going to look at the correlation between *gdp* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp')
+
+"""We can see quite a strong correlation of _gdp_ with _recovery_rate_ as well as the  moderate-to-strong correlation with _recovered_ema_, and therefore *gdp* can be used in future clustering experiments.
+
+Now we are going to look at the correlation between *gdp_5_growth_rate* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp_5_growth_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp_5_growth_rate')
+
+"""We can see *gdp_5_growth_rate* to show relatively strong correlation with COVID-19 recovery rate.
+
+Now we are going to look at the correlation between *gdp_gov_exp_rate* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp_gov_exp_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp_gov_exp_rate')
+
+"""We can see no any strong correlation of the Government expense rate (% of GDP) with COVID-19 spread attributes
+
+Now we are going to look at the correlation between *gdp_growth_rate* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp_growth_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp_growth_rate')
+
+"""We see no any strong correlation of the GDP Growth Rate with COVID-19 spread attributes
+
+Now we are going to look at the correlation between *gdp_per_capita* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp_per_capita
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp_per_capita')
+
+"""We see no any strong correlation between the *GDP per Capita* rate and COVID-19 spread attributes
+
+Now we are going to look at the correlation between *gdp_tax_burden* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gdp_tax_burden
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gdp_tax_burden')
+
+"""We see relatively medium-to-strong correlation between the *gdp_tax_burden* and COVID-19 spread attributes
+
+Now we are going to look at the correlation between *gov_integrity* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gov_integrity
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gov_integrity')
+
+"""We see no strong correlation between *gov_integrity* and any of the COVID-19 pandemic metrics.
+
+Now we are going to look at the correlation between *gov_spending* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with gov_spending
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'gov_spending')
+
+"""We see no strong correlation between *gov_spending* and any of the COVID-19 pandemic metrics.
+
+Now we are going to look at the correlation between *income_tax* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with income_tax
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'income_tax')
+
+"""We find moderate-to-strong correlation between *income_tax* and *recovery_rate*
+
+Now we are going to look at the correlation between *infl_rate (inflation rate)* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with infl_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'infl_rate')
+
+"""We see no strong correlation between *infl_rate* and any of the COVID-19 pandemic metrics.
+
+Now we are going to look at the correlation between *investment_freedom* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with investment_freedom
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'investment_freedom')
+
+"""We find *investom_freedom* to have moderate-to-strong negative correlation with the *recovery_rate*
+
+Now we are going to look at the correlation between *judical_effectiveness* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with judical_effectiveness
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'judical_effectiveness')
+
+"""We find the moderate-to-strong correlation between *judical_effectiveness* and *recovery_rate*
+
+Now we are going to look at the correlation between *labor_freedom* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with labor_freedom
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'labor_freedom')
+
+"""We see no strong correlations between *labor_freedom* and COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *monetary_freedom* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with monetary_freedom
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'monetary_freedom')
+
+"""We find no strong correlations between *monetary_freedom* and the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *property_rights* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with property_rights
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'property_rights')
+
+"""We find no strong correlations between *property_rights* and the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *pub_debt* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with pub_debt
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'pub_debt')
+
+"""We can see *pub_debt* to have medium correlation with *deaths_ema*
+
+Now we are going to look at the correlation between *region_rank* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with region_rank
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'region_rank')
+
+"""We see no strong correlation between *region_rank* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *score_2019* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with score_2019
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'score_2019')
+
+"""We see no strong correlation between *score_2019* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *tariff_rate* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with tariff_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'tariff_rate')
+
+"""We see no strong correlation between *tariff_rate* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *tax_burden* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with tax_burden
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'tax_burden')
+
+"""We see no strong correlation between *tax_burden* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *trade_freedom* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with trade_freedom
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'trade_freedom')
+
+"""We see no strong correlation between *trade_freedom* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *unemp_rate* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with unemp_rate
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'unemp_rate')
+
+"""We see no strong correlation between *unemp_rate* and any of the COVID-19 pandemic metrics
+
+Now we are going to look at the correlation between *world_rank* and the COVID-19 pandemic metrics
+"""
+
+# check correlations with world_rank
+economic_freedom_param_correlations(covid_latest_date_df, eco_df, 'world_rank')
+
+"""We see no strong correlation between *world_rank* and any of the COVID-19 pandemic metrics
+
+## COVID-19 and Macro-Economic Parameters of Countries (World Happyness Report 2020)
+
+First of all, we will load and transform the data for World Happiness report 2020
+"""
+
+happiness_data_path = base_dataset_folder + '/world-happiness-report-2020/WHR20_DataForFigure2.1.csv'
+
+# Load World Happiness 2020 data file
+happiness_raw = pd.read_csv(happiness_data_path, encoding= "ISO-8859-1")
+
+happiness_raw.head(5)
+
+"""Now we will transform the raw World Happiness data into the format ready to merge with COVID-19 pandemic metrics"""
+
+# Prepare country name transformation
+country_names = happiness_raw['Country name'].unique().tolist()
+
+# Create a zip object from two lists
+zipbObj = zip(country_names, country_names)
+ 
+# Create a dictionary from zip object
+dictOfCountries = dict(zipbObj)
+
+# overwrite a mapping for the countries with different names in WHO Obesity and COVID-19 datasets
+dictOfCountries['United States of America'] = 'US'
+dictOfCountries['Ivory Coast'] = 'Cote d\'Ivoire'
+dictOfCountries['Macedonia'] = 'North Macedonia'
+dictOfCountries['Taiwan Province of China'] = 'Taiwan*'
+dictOfCountries['South Korea'] = 'Korea, South'
+dictOfCountries['Czech Republic'] = 'Czechia'
+dictOfCountries['Swaziland'] = 'Eswatini'
+
+
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['Regional indicator']),
+    pdp.ColRename({'Country name': 'country_id'
+                   }),
+    pdp.MapColVals(['country_id'], dictOfCountries)
+])
+
+happiness_df = pipeline.apply(happiness_raw)
+
+"""Now we will investigate relations between Word Happiness report variables before we merge it with COVID-19 pandemic features"""
+
+pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['country_id'])
+])
+
+happiness_corr_df = pipeline.apply(happiness_df)
+
+corr = happiness_corr_df.corr()
+
+ax = sns.heatmap(
+    corr, 
+    vmin=-1, vmax=1, center=0,
+    cmap=sns.diverging_palette(20, 220, n=200),
+    square=True
+)
+ax.set_xticklabels(
+    ax.get_xticklabels(),
+    rotation=45,
+    horizontalalignment='right'
+)
+ax.set_title('Correlation of COVID-19 Ratios with WHO Obesity Indicies')
+ax
+
+"""Now let's merge the world happiness parameters with the latest COVID-19 epidemic metrics"""
+
+#join
+all_happiness_data = covid_latest_date_df.merge(happiness_df, on='country_id', how='left')
+
+pipe_calc = pdp.PdPipeline([
+    pdp.ApplyToRows(lambda row: (row['deaths']/row['confirmed']), 'mortality_rate'),
+    pdp.ApplyToRows(lambda row: (row['recovered']/row['confirmed']), 'recovery_rate')          
+])
+
+# calculate ratio attributes
+all_happiness_data = pipe_calc.apply(all_happiness_data)
+
+all_happiness_data.head(5)
+
+"""Now we will check the correlation of every attribute of World Happiness with COVID-19 pandemic parameters"""
+
+def happiness_param_correlations(covid_df, happy_df, target_col):
+  col_list = happy_df.columns.values.tolist() 
+  keep_list = ['country_id', target_col]
+
+  drop_list = []
+  for col in col_list:
+    if col not in keep_list:
+      new_list = [col]
+      drop_list = drop_list + new_list
+
+  pipe_filter_param = pdp.PdPipeline([
+    pdp.ColDrop(drop_list)               
+  ])
+
+  happy_param_df = pipe_filter_param.apply(happy_df)
+
+  #join
+  happy_param_data = covid_df.merge(happy_param_df, on='country_id', how='left')
+
+  pipeline = pdp.PdPipeline([
+    pdp.ColDrop(['country_id', 'covid_date',
+                 'confirmed',	'deaths',	'recovered',
+                 'day_num'])
+  ])
+
+  happy_param_corr = pipeline.apply(happy_param_data)
+
+  return heatmap_numeric_w_dependent_variable(happy_param_corr, target_col)
+
+"""We will check correlations with *'Ladder score'*"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Ladder score')
+
+"""We find moderate-to-weak correlations of *Ladder score* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Standard error of ladder score'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Standard error of ladder score')
+
+"""We can see its strong negative correllation *'Standard error of ladder score'* with *'recovery_rate'*
+
+Now we will check the correlation wiht *'upperwhisker'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'upperwhisker')
+
+"""We find moderate-to-weak correlations of *upperwhisker* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'lowerwhisker'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'lowerwhisker')
+
+"""We find moderate-to-weak correlations of *lowerwhisker* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Logged GDP per capita'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Logged GDP per capita')
+
+"""We find moderate-to-weak correlations of *Logged GDP per capita* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Social support'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Social support')
+
+"""We find moderate-to-weak correlations of *'Social support'* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Healthy life expectancy'*
+"""
+
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Healthy life expectancy')
+
+"""We find moderate-to-weak correlations of *'Healthy life expectancy'* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Freedom to make life choices'*
+"""
+
+#Freedom to make life choices
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Freedom to make life choices')
+
+"""We find moderate-to-weak correlations of *'Freedom to make life choices'* with *death_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Generosity'*
+"""
+
+# Generosity
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Generosity')
+
+"""We find no strong correlation between *Generosity* and COVID-19 pandemic metrics
+
+Now we will check the correlation wiht *'Perceptions of corruption'*
+"""
+
+# 'Perceptions of corruption'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Perceptions of corruption')
+
+"""We see medium correlation between *'Perceptions of corruption'* and *recovery_rate*
+
+Now we will check the correlation wiht *'Ladder score in Dystopia'*
+"""
+
+# 'Ladder score in Dystopia'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Ladder score in Dystopia')
+
+"""We find no strong correlation between *'Ladder score in Dystopia'* and COVID-19 pandemic metrics
+
+Now we will check the correlation wiht *'Explained by: Log GDP per capita'*
+"""
+
+# 'Ladder score in Dystopia'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Log GDP per capita')
+
+"""We see *'Explained by: Log GDP per capita'* to have a strong-to-medium correlation with *recovery_rate* as well as medium correlation with *confirmed_ema* and *deaths_ema*
+
+Now we will check the correlation wiht *'Explained by: Social support'*
+"""
+
+# 'Explained by: Social support'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Social support')
+
+"""We see *'Explained by: Social support'* to have medium correlation with *recovery_rate* and *deaths_ema*
+
+Now we will check the correlation wiht *'Explained by: Healthy life expectancy'*
+"""
+
+# 'Explained by: Healthy life expectancy'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Healthy life expectancy')
+
+"""We see *'Explained by: Healthy life expectancy'* to ahve strong correlation with *recovery_rate* as well as medium correlation with *deaths_ema* and *confirmed_ema*
+
+Now we will check the correlation wiht *'Explained by: Freedom to make life choices'*
+"""
+
+# 'Explained by: Freedom to make life choices'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Freedom to make life choices')
+
+"""We can see *'Explained by: Freedom to make life choices'* to have strong correlation with *recovery_rate* as well as medium negative correlation with *mortality_rate*
+
+Now we will check the correlation wiht *'Explained by: Generosity'*
+"""
+
+# 'Explained by: Generosity'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Generosity')
+
+"""We see *'Explained by: Generosity'* to have no any correlations with the COVID-19 pandemic features
+
+Now we will check the correlation wiht *'Explained by: Perceptions of corruption'*
+"""
+
+# 'Explained by: Perceptions of corruption'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Explained by: Perceptions of corruption')
+
+"""We can see *'Explained by: Perceptions of corruption'* to have medium correlation with *recovery_rate*
+
+Now we will check the correlation wiht *'Dystopia + residual'*
+"""
+
+# 'Dystopia + residual'
+happiness_param_correlations(covid_latest_date_df, happiness_df, 'Dystopia + residual')
+
+"""We see *'Dystopia + residual'* to have medium correlation with *mortality_rate* as well as medium negative correlation with *recovery_rate*
 
 # COVID-19 and Weather
 
@@ -1131,5 +2426,6 @@ TBD
 1.   JHU CoronaVirus Dataset: https://github.com/CSSEGISandData/COVID-19
 2.   COVID-19 containment and mitigation measures (https://www.kaggle.com/paultimothymooney/covid-19-containment-and-mitigation-measures/), using data from http://epidemicforecasting.org/containment
 3.   Popolation forecasts 2020 (https://www.kaggle.com/tanuprabhu/population-by-country-2020, scrapped data from https://www.worldometers.info/world-population/population-by-country/, based on the latest United Nations Population Division estimates
-4.   TBD
+4.   Additional datasource references (to be processed)
+- https://medium.com/intuitive-machine-learning/covid-19-open-datasets-8432a7c085e0
 """
